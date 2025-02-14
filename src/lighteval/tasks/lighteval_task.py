@@ -292,6 +292,7 @@ class LightevalTask:
                 item["__few_shots"] = few_shots
                 # Some tasks require to know which is the current item index in order to apply a different prompt template
                 item["__index"] = ix
+                # breakpoint()
                 cur_docs = self.formatter(item, self.name)
                 if cur_docs is None:
                     continue
@@ -571,7 +572,11 @@ class LightevalTask:
                 )
 
         for task, dataset in zip(tasks, datasets):
+            # dataset['validation'] = dataset['validation'].select(range(1000))
             task.dataset = dataset
+
+        print("Done load datasets")
+
 
 
 def create_requests_from_tasks(  # noqa: C901

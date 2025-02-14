@@ -72,6 +72,7 @@ from lighteval.utils.imports import (
 from lighteval.utils.parallelism import find_executable_batch_size
 from lighteval.utils.utils import EnvConfig, as_list, boolstring_to_bool
 
+from transformers.models.llama.modeling_adaptive_llama import AdaptiveLlamaForCausalLM, AdaptiveFanInHCG
 
 logger = logging.getLogger(__name__)
 
@@ -448,7 +449,14 @@ class TransformersModel(LightevalModel):
         config.model_parallel, max_memory, device_map = self.init_model_parallel(config.model_parallel)
         torch_dtype = _get_dtype(config.dtype, self._config)
 
-        model = AutoModelForCausalLM.from_pretrained(
+        print("model", config.pretrained)
+
+        from_class = AutoModelForCausalLM
+        if 'adaptive' in config.pretrained:
+            from transformers.models.llama.modeling_adaptive_llama import AdaptiveLlamaForCausalLM
+            from_class = AdaptiveLlamaForCausalLM
+
+        model = from_class.from_pretrained(
             config.pretrained,
             revision=config.revision + (f"/{config.subfolder}" if config.subfolder is not None else ""),
             max_memory=max_memory,
@@ -648,6 +656,7 @@ class TransformersModel(LightevalModel):
             context = request.context[0]
             max_context_size_allowed = self.max_length - max_generated_tokens
 
+            # print("self.add_special_tokens", self.add_special_tokens)
             model_inputs = self.tokenizer(
                 context,
                 padding=True,
@@ -853,6 +862,7 @@ class TransformersModel(LightevalModel):
                     max_length=max_context_continuation_size_allowed,  # we always allow minimum one token of generation
                     add_special_tokens=self.add_special_tokens,
                 ).to(self.device)
+                # print("self.add_special_tokens", self.add_special_tokens)
 
                 # The main question for this step is the following:
                 # Would we rather truncate the prompt to allow generation to go to max_new_tokens, at the risk
@@ -922,15 +932,41 @@ class TransformersModel(LightevalModel):
             renormalize_logits=True,
         )
 
+        if isinstance(self.model, AdaptiveLlamaForCausalLM):
+            generation_config = {
+                "do_sample": False,
+                "min_new_tokens": 1,
+                "max_new_tokens": max_new_tokens,
+                "early_stopping": True,
+                "num_beams": 1,
+                "repetition_penalty": 1.0,
+                "remove_invalid_values": True,
+                "eos_token_id": self.tokenizer.eos_token_id,
+                "pad_token_id": self.tokenizer.eos_token_id,
+                "forced_eos_token_id": self.tokenizer.eos_token_id,
+                "stop_strings": [self.tokenizer.eos_token, '<|im_end|>'],
+                "tokenizer": self.tokenizer,
+                "use_cache": False,
+                "no_repeat_ngram_size": 4,
+                "num_return_sequences": 1,
+                "return_dict_in_generate": True,
+            }
+            special_embeddings_mask = batch.input_mask.cumsum(-1)
+            special_embeddings_mask[special_embeddings_mask > 1] = 1
+            generation_config['special_embeddings_mask'] = special_embeddings_mask
+
         # Compute model generation
         outputs: GenerateOutput = self.model.generate(
             input_ids=batch.input_ids,
             attention_mask=batch.input_mask,
-            stopping_criteria=stopping_criteria,
+            # stopping_criteria=stopping_criteria,
             **generation_config,
         )
+        # print( "\n\n".join(self.tokenizer.batch_decode(outputs.sequences, skip_special_tokens=True)) )
+
         generations = outputs.sequences[:, batch.input_ids.size(1) :]
         generations = torch.reshape(generations, (batch_size, num_samples, -1))
+
         generations, len_gens = self.pad_and_gather(generations, num_samples=num_samples)
         batch.input_ids, len_ids = self.pad_and_gather(batch.input_ids)
 
