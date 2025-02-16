@@ -952,8 +952,9 @@ class TransformersModel(LightevalModel):
                 "return_dict_in_generate": True,
             }
             special_embeddings_mask = batch.input_mask.cumsum(-1)
-            special_embeddings_mask[special_embeddings_mask > 1] = 1
+            special_embeddings_mask[special_embeddings_mask > 1] = 0
             generation_config['special_embeddings_mask'] = special_embeddings_mask
+            # print("special_embeddings_mask", special_embeddings_mask)
 
         # Compute model generation
         outputs: GenerateOutput = self.model.generate(
