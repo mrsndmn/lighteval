@@ -409,11 +409,11 @@ class TransformersModel(LightevalModel):
         # model.to(self.device)
         model.eval()
 
-        if self.continuous_batching:
-            generation_config = GenerationConfig(
-                **self.generation_config_dict,
-            )
-            model.generation_config = generation_config
+        # if self.continuous_batching:
+        generation_config = GenerationConfig(
+            **self.generation_config_dict,
+        )
+        model.generation_config = generation_config
 
         if self.config.compile:
             try:
@@ -736,6 +736,7 @@ class TransformersModel(LightevalModel):
                     padded=[sum(mask == 0) for mask in tokenized["attention_mask"]],
                 )
 
+                # print("max_new_tokens", max_new_tokens)
                 cur_reponses = self._generate(
                     batch=prepared_batch,
                     max_new_tokens=max_new_tokens,
@@ -744,6 +745,8 @@ class TransformersModel(LightevalModel):
                     num_samples=num_samples,
                     continuous_batching=False,
                 )
+                # print("cur_reponses", cur_reponses)
+                # breakpoint()
                 results.extend(cur_reponses)
 
         return dataset.get_original_order(results)
@@ -800,19 +803,23 @@ class TransformersModel(LightevalModel):
 
         generation_config = self.generation_config_dict.copy()
         generation_config.update(
-            max_new_tokens=max_new_tokens,
             pad_token_id=self.tokenizer.pad_token_id if self.tokenizer.pad_token_id else self.tokenizer.eos_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
             num_return_sequences=num_samples,
             output_logits=returns_logits,
             renormalize_logits=True,
         )
+
+        generation_config.setdefault("max_new_tokens", max_new_tokens)
+
         if num_samples == 1 and generation_config["temperature"] == 0:
             generation_config["do_sample"] = False
         if num_samples > 1 and generation_config["temperature"] == 0:
             logger.warning("num_samples > 1 but temperature is set to 0, this will not sample different outputs.")
 
         # Compute model generation
+        # print("generation_config", generation_config)
+        # print("generation_config", generation_config['max_new_tokens'])
         outputs: GenerateOutput = self.model.generate(
             input_ids=batch.input_ids,
             attention_mask=batch.input_mask,
